@@ -698,6 +698,18 @@ for m = 1:numNavEbNo
     for trial = 1:numNavTrials
         [chTF_nav, chN] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnConfig);
 
+        % ---- Add random residual propagation delay ----
+        % After coarse timing advance (TA), residual range uncertainty
+        % spans a few delay bins. Simulate as uniform [2, 8] bins offset.
+        bulkDelayBins = 2 + 6*rand();
+        bulkDelay_s   = bulkDelayBins * delta_tau_s;
+        chN.pathDelays_s = chN.pathDelays_s + bulkDelay_s;
+
+        % Apply corresponding phase ramp to TF channel matrix
+        sc_idx = (0:numSC-1)';
+        phaseRamp = exp(-2j*pi * sc_idx * scs * bulkDelay_s);
+        chTF_nav = chTF_nav .* phaseRamp;
+
         % True LoS
         [~, trueLoS] = max(abs(chN.pathGains));
         trueVel = chN.pathDopplers_Hz(trueLoS) * c_light / fc;
@@ -726,8 +738,7 @@ for m = 1:numNavEbNo
         rErr2(trial) = (estRange - trueRange)^2;
 
         % ============ OFDM-Pilot sensing ============
-        % OFDM pilot: use TF channel estimate, add noise, then 2D-IFFT
-        % to extract delay-Doppler profile
+        % OFDM pilot: use TF channel estimate, add noise, then SFFT
         sp_o = mean(abs(chTF_nav(:)).^2);
         nV_o = sp_o * 10^(-snr_nav(m)/10);
         chTF_noisy = chTF_nav + sqrt(nV_o/2) * ...
@@ -750,7 +761,7 @@ for m = 1:numNavEbNo
         dopplerCentre = floor(ofdmSym/2) + 1;
         estDoppler_ofdm_Hz = (peakDoppler - dopplerCentre) * delta_nu_hz;
 
-        % OFDM integer-grid limited: quantization error ~delta_nu/2 ≈ 438 Hz
+        % OFDM integer-grid limited: quantization error ~delta_tau/2 for delay
         estVel_o = estDoppler_ofdm_Hz * c_light / fc;
         estRange_o = abs(estDelay_ofdm_s) * c_light;
 
@@ -823,6 +834,15 @@ for ei = 1:numElev
     for trial = 1:numTrials6
         [chTF6, chN] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnCfg_e);
 
+        % ---- Add random residual propagation delay ----
+        bulkDelayBins = 2 + 6*rand();
+        bulkDelay_s   = bulkDelayBins * delta_tau_s;
+        chN.pathDelays_s = chN.pathDelays_s + bulkDelay_s;
+
+        sc_idx_6 = (0:numSC-1)';
+        phaseRamp6 = exp(-2j*pi * sc_idx_6 * scs * bulkDelay_s);
+        chTF6 = chTF6 .* phaseRamp6;
+
         % True LoS parameters
         [~, trueLoS] = max(abs(chN.pathGains));
         trueVel   = chN.pathDopplers_Hz(trueLoS) * c_light / fc;
@@ -845,21 +865,20 @@ for ei = 1:numElev
         vErr2_t(trial) = (estVel_t - trueVel)^2;
         rErr2_t(trial) = (estRange_t - trueRange)^2;
 
-        % ---- OFDM TF-Pilot sensing (2D-IFFT) ----
+        % ---- OFDM TF-Pilot sensing (SFFT) ----
         sp_o = mean(abs(chTF6(:)).^2);
         nV_o = sp_o * 10^(-snr6/10);
         chTF_noisy = chTF6 + sqrt(nV_o/2) * ...
             (randn(size(chTF6)) + 1j*randn(size(chTF6)));
 
         % Symplectic FFT: TF → delay-Doppler response
-        % IFFT along freq axis (dim1) → delay; FFT along time axis (dim2) → Doppler
         ddResp = fftshift(fft(ifft(chTF_noisy, [], 1), [], 2));
 
         % Find LoS peak
         [~, peakIdx] = max(abs(ddResp(:)));
         [peakRow, peakCol] = ind2sub(size(ddResp), peakIdx);
 
-        % Delay estimation
+        % Delay estimation (integer-grid quantization limited)
         delayCentre = floor(numSC/2) + 1;
         estDelay_o_s = (peakRow - delayCentre) * delta_tau_s;
         estRange_o = abs(estDelay_o_s) * c_light;
