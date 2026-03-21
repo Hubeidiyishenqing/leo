@@ -733,8 +733,9 @@ for m = 1:numNavEbNo
         chTF_noisy = chTF_nav + sqrt(nV_o/2) * ...
             (randn(size(chTF_nav)) + 1j*randn(size(chTF_nav)));
 
-        % 2D-IFFT: TF → delay-Doppler response
-        ddResp = fftshift(ifft2(chTF_noisy));  % [N_sc x M_sym]
+        % Symplectic FFT: TF → delay-Doppler response
+        % IFFT along freq axis (dim1) → delay; FFT along time axis (dim2) → Doppler
+        ddResp = fftshift(fft(ifft(chTF_noisy, [], 1), [], 2));  % [N_sc x M_sym]
 
         % Search for LoS peak in delay-Doppler map
         [~, peakIdx] = max(abs(ddResp(:)));
@@ -749,7 +750,7 @@ for m = 1:numNavEbNo
         dopplerCentre = floor(ofdmSym/2) + 1;
         estDoppler_ofdm_Hz = (peakDoppler - dopplerCentre) * delta_nu_hz;
 
-        % OFDM cannot resolve bulk Doppler > M/2 bins, aliasing occurs
+        % OFDM integer-grid limited: quantization error ~delta_nu/2 ≈ 438 Hz
         estVel_o = estDoppler_ofdm_Hz * c_light / fc;
         estRange_o = abs(estDelay_ofdm_s) * c_light;
 
@@ -779,7 +780,7 @@ semilogy(EbNo_nav, velRMSE, 'b-d', 'LineWidth', 2, 'MarkerSize', 7);
 semilogy(EbNo_nav, crb_vel, 'r--', 'LineWidth', 1.5);
 xlabel('E_b/N_0 (dB)'); ylabel('Velocity RMSE (m/s)');
 title('(a) Velocity Estimation');
-legend('OFDM Pilot (2D-IFFT)', 'OTFS DD Pilot (Quinn)', 'CRB', ...
+legend('OFDM Pilot (Grid-limited)', 'OTFS DD Pilot (Fractional)', 'CRB', ...
     'Location', 'southwest');
 grid on; set(gca, 'FontSize', 11);
 
@@ -789,7 +790,7 @@ semilogy(EbNo_nav, rangeRMSE, 'b-d', 'LineWidth', 2, 'MarkerSize', 7);
 semilogy(EbNo_nav, crb_range, 'r--', 'LineWidth', 1.5);
 xlabel('E_b/N_0 (dB)'); ylabel('Range RMSE (m)');
 title('(b) Range Estimation');
-legend('OFDM Pilot (2D-IFFT)', 'OTFS DD Pilot (Quinn)', 'CRB', ...
+legend('OFDM Pilot (Grid-limited)', 'OTFS DD Pilot (Fractional)', 'CRB', ...
     'Location', 'southwest');
 grid on; set(gca, 'FontSize', 11);
 
@@ -850,8 +851,9 @@ for ei = 1:numElev
         chTF_noisy = chTF6 + sqrt(nV_o/2) * ...
             (randn(size(chTF6)) + 1j*randn(size(chTF6)));
 
-        % 2D-IFFT: TF → delay-Doppler response
-        ddResp = fftshift(ifft2(chTF_noisy));
+        % Symplectic FFT: TF → delay-Doppler response
+        % IFFT along freq axis (dim1) → delay; FFT along time axis (dim2) → Doppler
+        ddResp = fftshift(fft(ifft(chTF_noisy, [], 1), [], 2));
 
         % Find LoS peak
         [~, peakIdx] = max(abs(ddResp(:)));
@@ -862,7 +864,7 @@ for ei = 1:numElev
         estDelay_o_s = (peakRow - delayCentre) * delta_tau_s;
         estRange_o = abs(estDelay_o_s) * c_light;
 
-        % Doppler estimation (subject to aliasing at LEO speeds)
+        % Doppler estimation (integer-grid quantization limited)
         dopplerCentre = floor(ofdmSym/2) + 1;
         estDoppler_o_Hz = (peakCol - dopplerCentre) * delta_nu_hz;
         estVel_o = estDoppler_o_Hz * c_light / fc;
