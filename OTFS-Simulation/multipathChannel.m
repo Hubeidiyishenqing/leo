@@ -2,12 +2,16 @@ function [H, chInfo] = multipathChannel(cpSize, delta_f, inSig, velocity, ntnCon
 
 %--------------------------------------------------------------------------
 %
-%   3GPP TR 38.811 NTN Channel Model using MATLAB nrTDLChannel (Custom)
+%   3GPP TR 38.811 NTN Channel Model with Shadowed-Rician LoS Fading
 %
 %   Uses MATLAB 5G Toolbox's nrTDLChannel in Custom mode with NTN-TDL
 %   tap parameters from 3GPP TR 38.811 Section 6.9.2.
 %
 %   Compatible with all MATLAB versions that have nrTDLChannel.
+%
+%   Enhancement: LoS component uses Shadowed-Rician (Loo model) fading
+%   to capture ionospheric scintillation and tropospheric shadowing.
+%   Shadow std follows ITU-R P.681 elevation/scenario-dependent tables.
 %
 %   Supported profiles:
 %     NTN-TDL-A  : NLOS, 3 taps  (Table 6.9.2-1)
@@ -118,10 +122,21 @@ dummyIn = complex(randn(numSamp, 1), randn(numSamp, 1)) / sqrt(2);
 % Extract base scatter gains at first sample
 pathGains = squeeze(pathGainsAll(1, :, 1, 1)).';   % numPaths x 1
 
-% Add deterministic LOS component to first tap for LOS profiles
+% Add Shadowed-Rician LOS component to first tap for LOS profiles
 if isLOS
-    losComponent = sqrt(K_lin / (K_lin + 1));
-    pathGains(1) = losComponent + pathGains(1);
+    % Shadowed-Rician (Loo model): LoS amplitude follows lognormal fading
+    % Models ionospheric scintillation and tropospheric shadowing on the
+    % direct path. Shadow std depends on elevation and environment.
+    sigma_s_dB = getShadowingStd(elevAngle, scenario);
+
+    % Lognormal shadow: 10^(N(0, sigma_s_dB) / 20)
+    shadowFading_dB = sigma_s_dB * randn();
+    shadowGain = 10^(shadowFading_dB / 20);
+
+    % LoS amplitude with shadow fading + random phase
+    losAmplitude = sqrt(K_lin / (K_lin + 1)) * shadowGain;
+    losPhase = 2 * pi * rand();
+    pathGains(1) = losAmplitude * exp(1j * losPhase) + pathGains(1);
 end
 
 %% ========================================================================
@@ -202,4 +217,38 @@ end
 elevAngle = max(10, min(90, elevAngle));
 K_dB = interp1(elev_table, K_table, elevAngle, 'pchip');
 
+end
+
+
+%% ========================================================================
+%  LOCAL FUNCTION: Elevation-Angle-Dependent Shadow Fading Std
+%  ITU-R P.681 / Loo model parameters for LEO satellite channels
+%  ========================================================================
+function sigma_dB = getShadowingStd(elevAngle, scenario)
+% Shadow fading standard deviation for LoS path (dB)
+% Based on ITU-R P.681 and Loo model parameters for LEO satellite channels.
+% Higher elevation -> less shadowing; Rural -> less shadowing than Urban.
+
+elev_table = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+
+sigma_DenseUrban = [4.0, 3.5, 3.0, 2.7, 2.4, 2.2, 2.0, 1.9, 1.8];
+sigma_Urban      = [3.2, 2.8, 2.4, 2.1, 1.8, 1.6, 1.4, 1.3, 1.2];
+sigma_Suburban    = [2.5, 2.1, 1.8, 1.5, 1.3, 1.1, 0.9, 0.8, 0.7];
+sigma_Rural       = [1.5, 1.2, 1.0, 0.8, 0.6, 0.5, 0.4, 0.3, 0.3];
+
+switch scenario
+    case 'DenseUrban'
+        sigma_table = sigma_DenseUrban;
+    case 'Urban'
+        sigma_table = sigma_Urban;
+    case 'Suburban'
+        sigma_table = sigma_Suburban;
+    case 'Rural'
+        sigma_table = sigma_Rural;
+    otherwise
+        sigma_table = sigma_Urban;
+end
+
+elevAngle = max(10, min(90, elevAngle));
+sigma_dB = interp1(elev_table, sigma_table, elevAngle, 'pchip');
 end
