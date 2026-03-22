@@ -73,16 +73,26 @@ scanCols = max(1, kp - maxDopplerBins) : min(M, kp + maxDopplerBins);
 % position, leaving only noise at (lp,kp).
 scanRegion = abs(rxGrid(scanRows, scanCols));
 pilotAmp = max(scanRegion(:));
-threshRelativedB = -8;  % Detect paths down to -8 dB below pilot
-threshold = pilotAmp * 10^(threshRelativedB/20);
+% Adaptive threshold: use noise floor estimate to detect weak scatter paths
+% Noise floor from median of scan region (robust against signal peaks)
+noiseFloor = median(scanRegion(:));
+% Threshold = max(relative to pilot, 3x noise floor)
+% This detects paths down to -25 dB below pilot while avoiding noise
+threshRelativedB = -25;
+threshPilot = pilotAmp * 10^(threshRelativedB/20);
+threshNoise = 3.0 * noiseFloor;
+threshold = max(threshPilot, threshNoise);
 
 %% Build DD channel impulse response
 hEst = zeros(N, M);
 
 % Scan the valid region for significant taps
-delayEst = [];
-dopplerEst = [];
-pathGains = [];
+% Collect all candidates above threshold, then keep strongest
+maxPaths = 10;   % Limit to prevent noise over-detection
+candidateDelays = [];
+candidateDopplers = [];
+candidateGains = [];
+candidateAmps = [];
 
 for r = 1:length(scanRows)
     for c = 1:length(scanCols)
@@ -91,20 +101,32 @@ for r = 1:length(scanRows)
         val = rxGrid(lr, kc);
 
         if abs(val) > threshold
-            % Channel tap detected
-            delayShift = lr - lp;
-            dopplerShift = kc - kp;
-
-            % Place in DD channel matrix (circular shift)
-            delayIdx = mod(delayShift, N) + 1;
-            dopplerIdx = mod(dopplerShift, M) + 1;
-            hEst(delayIdx, dopplerIdx) = val;
-
-            delayEst = [delayEst; delayShift];
-            dopplerEst = [dopplerEst; dopplerShift];
-            pathGains = [pathGains; val];
+            candidateDelays = [candidateDelays; lr - lp];
+            candidateDopplers = [candidateDopplers; kc - kp];
+            candidateGains = [candidateGains; val];
+            candidateAmps = [candidateAmps; abs(val)];
         end
     end
+end
+
+% Keep only the strongest paths (up to maxPaths)
+if length(candidateAmps) > maxPaths
+    [~, sortIdx] = sort(candidateAmps, 'descend');
+    keepIdx = sortIdx(1:maxPaths);
+    candidateDelays = candidateDelays(keepIdx);
+    candidateDopplers = candidateDopplers(keepIdx);
+    candidateGains = candidateGains(keepIdx);
+end
+
+delayEst = candidateDelays;
+dopplerEst = candidateDopplers;
+pathGains = candidateGains;
+
+% Place in DD channel matrix
+for idx = 1:length(delayEst)
+    delayIdx = mod(delayEst(idx), N) + 1;
+    dopplerIdx = mod(dopplerEst(idx), M) + 1;
+    hEst(delayIdx, dopplerIdx) = pathGains(idx);
 end
 
 %% If no paths detected, use the pilot position as single-tap channel

@@ -206,31 +206,31 @@ for m = 1:numEbNo1
 
         % Generate new channel realization per trial
         [~, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnConfig);
+        % OTFS equalization channel: integer DD bins (matches applyChannelDD)
         chTF_eq = buildTF_AFC(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
+        % OFDM equalization channel: continuous delay/Doppler with sinc ICI loss
+        chTF_ofdm = buildTF_OFDMeq(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
 
         % ===================== OFDM =====================
+        % Time-domain channel with per-sample Doppler (ICI)
         % Uncoded
-        txDD_o = SFFT(guardbandTx);
-        rxDD_o = applyChannelDD(txDD_o, chI, scs, cpSize, fd_hz);
-        fTF = ISFFT(rxDD_o);
+        fTF = applyChannelTF_ICI(guardbandTx, chI, scs, cpSize, fd_hz);
         sp = mean(abs(fTF(:)).^2);
         nV = sp / 10^(snr_o_m/10);
         ns = sqrt(nV/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-        eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV) .* (fTF + ns);
+        eq = conj(chTF_ofdm) ./ (abs(chTF_ofdm).^2 + nV) .* (fTF + ns);
         pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
         rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
         ber_o = ber_o + sum(txBits ~= rb(1:nBitsTx)) / nBitsTx;
 
         % Coded
-        txDD_oc = SFFT(guardbandTx_coded);
-        rxDD_oc = applyChannelDD(txDD_oc, chI, scs, cpSize, fd_hz);
-        fTF_c = ISFFT(rxDD_oc);
+        fTF_c = applyChannelTF_ICI(guardbandTx_coded, chI, scs, cpSize, fd_hz);
         sp_c = mean(abs(fTF_c(:)).^2);
         nV_c = sp_c / 10^(snr_o_m/10);
         ns = sqrt(nV_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-        eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV_c) .* (fTF_c + ns);
+        eq = conj(chTF_ofdm) ./ (abs(chTF_ofdm).^2 + nV_c) .* (fTF_c + ns);
         pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
-        nV_eff = mean(nV_c ./ (abs(chTF_eq(:)).^2 + nV_c));
+        nV_eff = mean(nV_c ./ (abs(chTF_ofdm(:)).^2 + nV_c));
         llr = qamdemod(pR(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV_eff);
         deintLLR = randdeintrlv(llr, 4831);
         deintLLR = deintLLR(1:numCW*noCodedbits);
@@ -260,8 +260,10 @@ for m = 1:numEbNo1
         eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV2_c) .* (fTF2_c + ns);
         rDD = SFFT(eq);
         pR = rDD; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
-        nV2_eff = mean(nV2_c ./ (abs(chTF_eq(:)).^2 + nV2_c));
-        llr = qamdemod(pR(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV2_eff);
+        % Empirical noise variance: captures both thermal noise and MMSE-gain ISI
+        hardDec = qammod(qamdemod(pR(:), ModOrder, 'UnitAveragePower', true), ModOrder, 'UnitAveragePower', true);
+        nV2_emp = max(mean(abs(pR(:) - hardDec).^2), 1e-10);
+        llr = qamdemod(pR(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV2_emp);
         deintLLR = randdeintrlv(llr, 4831);
         deintLLR = deintLLR(1:numCW*noCodedbits);
         deintLLR = max(min(deintLLR, 50), -50);
@@ -328,8 +330,10 @@ for m = 1:numEbNo1
         eq_pc = conj(chTF_est_c) ./ (abs(chTF_est_c).^2 + nV3_c) .* rClean_c_TF;
         rDD_eq_c = SFFT(eq_pc);
         eqS_c = rDD_eq_c(dI_c);
-        nV3_c_eff = mean(nV3_c ./ (abs(chTF_est_c(:)).^2 + nV3_c));
-        llr_p = qamdemod(eqS_c, ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV3_c_eff);
+        % Empirical noise variance for OTFS-Pilot coded
+        hardDec_p = qammod(qamdemod(eqS_c, ModOrder, 'UnitAveragePower', true), ModOrder, 'UnitAveragePower', true);
+        nV3_c_emp = max(mean(abs(eqS_c - hardDec_p).^2), 1e-10);
+        llr_p = qamdemod(eqS_c, ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV3_c_emp);
         deintLLR_p = randdeintrlv(llr_p, 4831);
         deintLLR_p = deintLLR_p(1:numCW_pilot*noCodedbits);
         deintLLR_p = max(min(deintLLR_p, 50), -50);
@@ -405,19 +409,18 @@ for ei = 1:numElev
         snr_o_fi = snr_o; snr_t_fi = snr_t; snr_p_fi = snr_p;
         ber_o_acc = 0; ber_t_acc = 0; ber_p_acc = 0;
         parfor trial = 1:numTrials2
-            [chTF, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnCfg_e);
+            [~, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnCfg_e);
 
-            % Matched TF channel for equalization
+            % Equalization channels
             chTF_eq = buildTF_AFC(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
+            chTF_ofdm = buildTF_OFDMeq(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
 
-            % OFDM (via DD domain)
-            txDD_o = SFFT(guardbandTx);
-            rxDD_o = applyChannelDD(txDD_o, chI, scs, cpSize, fd_hz);
-            fTF = ISFFT(rxDD_o);
+            % OFDM (time-domain channel with ICI)
+            fTF = applyChannelTF_ICI(guardbandTx, chI, scs, cpSize, fd_hz);
             sp = mean(abs(fTF(:)).^2);
             nV = sp / 10^(snr_o_fi/10);
             ns = sqrt(nV/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-            eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV) .* (fTF + ns);
+            eq = conj(chTF_ofdm) ./ (abs(chTF_ofdm).^2 + nV) .* (fTF + ns);
             pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
             rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
             ber_o_acc = ber_o_acc + sum(txBits ~= rb(1:nBitsTx2)) / nBitsTx2;
@@ -521,19 +524,18 @@ for si = 1:numScen
     nBitsPilot3 = length(txBits_pilot);
     ber_o_acc = 0; ber_t_acc = 0; ber_p_acc = 0;
     parfor trial = 1:numTrials3
-        [chTF, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnCfg_s);
+        [~, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnCfg_s);
 
-        % Matched TF channel for equalization
+        % Equalization channels
         chTF_eq = buildTF_AFC(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
+        chTF_ofdm = buildTF_OFDMeq(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
 
-        % OFDM (via DD domain)
-        txDD_o = SFFT(guardbandTx);
-        rxDD_o = applyChannelDD(txDD_o, chI, scs, cpSize, fd_hz);
-        fTF = ISFFT(rxDD_o);
+        % OFDM (time-domain channel with ICI)
+        fTF = applyChannelTF_ICI(guardbandTx, chI, scs, cpSize, fd_hz);
         sp = mean(abs(fTF(:)).^2);
         nV = sp / 10^(snr_o3/10);
         ns = sqrt(nV/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-        eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV) .* (fTF + ns);
+        eq = conj(chTF_ofdm) ./ (abs(chTF_ofdm).^2 + nV) .* (fTF + ns);
         pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
         rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
         ber_o_acc = ber_o_acc + sum(txBits ~= rb(1:nBitsTx3)) / nBitsTx3;
