@@ -310,10 +310,10 @@ for m = 1:numEbNo1
 
         rClean_c = rF_c_noisy - pResp_c;
         [eqS_c, ~] = otfsEqualizerMP(rClean_c(:), Hd_c, dI_c, qamAlphabet, nV3_c, mpCfg);
-        % For MP equalizer output, use residual MSE as noise variance
-        nV3_eff = mean(abs(eqS_c - qammod(qamdemod(eqS_c, ModOrder, 'UnitAveragePower', true), ModOrder, 'UnitAveragePower', true)).^2);
-        nV3_eff = max(nV3_eff, nV3_c * 0.01);  % floor to prevent zero
-        llr_p = qamdemod(eqS_c, ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV3_eff);
+        % MP equalizer removes multipath interference; residual ≈ AWGN.
+        % Use channel noise variance directly — robust at all SNR, avoids
+        % hard-decision bias that underestimates noise at low SNR.
+        llr_p = qamdemod(eqS_c, ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV3_c);
         deintLLR_p = randdeintrlv(llr_p, 4831);
         deintLLR_p = deintLLR_p(1:numCW_pilot*noCodedbits);
         deintLLR_p = max(min(deintLLR_p, 50), -50);  % clamp LLR for decoder stability
