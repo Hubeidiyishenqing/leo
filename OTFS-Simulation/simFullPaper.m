@@ -159,22 +159,18 @@ fprintf('  OTFS-Pilot: %d data positions, %d uncoded bits, %d coded CWs\n', ...
     numDataPosPilot, length(txBits_pilot), numCW_pilot);
 
 %% ========================================================================
-%  Fig 1: Three-Scheme BER vs Eb/No
+%  Fig 1: Three-Scheme BER vs Eb/No  (Monte Carlo averaged)
 %  ========================================================================
 fprintf('=== Fig 1: Three-Scheme BER vs Eb/No ===\n');
 tFig = tic;
 
 EbNo_fig1 = (0:2:24)';
 numEbNo1 = length(EbNo_fig1);
+numTrials1 = 20;   % Monte Carlo trials for statistical reliability
 
 % SNR formulas (match main.m)
 snr_ofdm = EbNo_fig1 + 10*log10(codeRate*k) + 10*log10(numDC/numSC);
 snr_otfs = snr_ofdm ;
-
-% Generate channel
-[channelTF, chInfo] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnConfig);
-fprintf('  Channel: %s, elev=%d, K=%.1f dB, %d paths\n', ...
-    chInfo.profile, chInfo.elevAngle, chInfo.KFactor_dB, chInfo.numPaths);
 
 % Uncoded BER
 ber1_ofdm = zeros(numEbNo1, 1);
@@ -185,140 +181,152 @@ ber1_c_ofdm = zeros(numEbNo1, 1);
 ber1_c_otfs = zeros(numEbNo1, 1);
 ber1_c_pilot = zeros(numEbNo1, 1);
 
-% ---- Build post-AFC TF channel for MMSE equalization ----
-% All schemes use AFC (bulk Doppler removal). MMSE sees residual channel.
-channelTF_afc = buildTF_AFC(chInfo, scs, cpSize, numSC, ofdmSym, fd_hz);
-
-% ---- Pre-compute OFDM path (uncoded data, with ICI via DD domain) ----
-txDD_ofdm = SFFT(guardbandTx);
-rxDD_ofdm = applyChannelDD(txDD_ofdm, chInfo, scs, cpSize, fd_hz);
-fadedTF_ofdm = ISFFT(rxDD_ofdm);
-sigPow_ofdm = mean(abs(fadedTF_ofdm(:)).^2);
-
-% ---- Pre-compute OFDM path (coded data) ----
-txDD_ofdm_c = SFFT(guardbandTx_coded);
-rxDD_ofdm_c = applyChannelDD(txDD_ofdm_c, chInfo, scs, cpSize, fd_hz);
-fadedTF_ofdm_c = ISFFT(rxDD_ofdm_c);
-sigPow_ofdm_c = mean(abs(fadedTF_ofdm_c(:)).^2);
-
-% ---- Pre-compute OTFS path (uncoded, with ICI via DD domain) ----
-rxDD_otfs = applyChannelDD(guardbandTx, chInfo, scs, cpSize, fd_hz);
-fadedTF_otfs = ISFFT(rxDD_otfs);
-sigPow_otfs = mean(abs(fadedTF_otfs(:)).^2);
-
-% ---- Pre-compute OTFS path (coded) ----
-rxDD_otfs_c = applyChannelDD(guardbandTx_coded, chInfo, scs, cpSize, fd_hz);
-fadedTF_otfs_c = ISFFT(rxDD_otfs_c);
-sigPow_otfs_c = mean(abs(fadedTF_otfs_c(:)).^2);
-
-% ---- Pre-compute OTFS-Pilot path (uncoded) ----
-[ddGrid, dataIdx, ~, ~, pilotInfoTx] = ...
-    pilotPatternDD(qamTx_pilot, ddGridSize(1), ofdmSym, pilotCfg);
-pilotInfoTx.maxDelayBins = pilotCfg.maxDelayBins;
-pilotInfoTx.maxDopplerBins = pilotCfg.maxDopplerBins;
-
-rxDD_faded = applyChannelDD(ddGrid, chInfo, scs, cpSize, fd_hz);
-sigPow_pilot = mean(abs(rxDD_faded(:)).^2);
-
-[~, ~, ~, navInfo] = ddChannelEstimate(rxDD_faded, pilotInfoTx);
-pilotAmp = ddGrid(pilotCfg.lp, pilotCfg.kp);
-pilotResponse = zeros(ddGridSize);
-for pp = 1:navInfo.numPathsDetected
-    lr = mod(pilotInfoTx.lp + navInfo.pathDelays(pp) - 1, ddGridSize(1)) + 1;
-    kc = mod(pilotInfoTx.kp + navInfo.pathDopplers(pp) - 1, ddGridSize(2)) + 1;
-    pilotResponse(lr, kc) = navInfo.pathGains(pp);
-end
-channelGains = navInfo.pathGains / pilotAmp;
-H_dd = buildDDChannelMatrix(navInfo.pathDelays, navInfo.pathDopplers, ...
-    channelGains, ddGridSize(1), ddGridSize(2), 0);
-
-% ---- Pre-compute OTFS-Pilot path (coded) ----
-[ddGrid_c, dataIdx_c, ~, ~, pilotInfoTx_c] = ...
-    pilotPatternDD(qamTx_pilot_coded, ddGridSize(1), ofdmSym, pilotCfg);
-pilotInfoTx_c.maxDelayBins = pilotCfg.maxDelayBins;
-pilotInfoTx_c.maxDopplerBins = pilotCfg.maxDopplerBins;
-rxDD_faded_c = applyChannelDD(ddGrid_c, chInfo, scs, cpSize, fd_hz);
-sigPow_pilot_c = mean(abs(rxDD_faded_c(:)).^2);
-
-[~,~,~,navInfo_c] = ddChannelEstimate(rxDD_faded_c, pilotInfoTx_c);
-pilotAmp_c = ddGrid_c(pilotCfg.lp, pilotCfg.kp);
-pilotResponse_c = zeros(ddGridSize);
-for pp = 1:navInfo_c.numPathsDetected
-    lr = mod(pilotInfoTx_c.lp + navInfo_c.pathDelays(pp) - 1, ddGridSize(1)) + 1;
-    kc = mod(pilotInfoTx_c.kp + navInfo_c.pathDopplers(pp) - 1, ddGridSize(2)) + 1;
-    pilotResponse_c(lr, kc) = navInfo_c.pathGains(pp);
-end
-channelGains_c = navInfo_c.pathGains / pilotAmp_c;
-H_dd_c = buildDDChannelMatrix(navInfo_c.pathDelays, navInfo_c.pathDopplers, ...
-    channelGains_c, ddGridSize(1), ddGridSize(2), 0);
-
-fprintf('  Pre-computation done. Starting EbNo sweep...\n');
-
 % Helper: LDPC decode a soft-bit vector
 decodeLDPC = @(llr) decodeLDPC_helper(llr, ldpcDecoder, numCW, noCodedbits);
 
 for m = 1:numEbNo1
-    % ===================== OFDM =====================
-    % Uncoded
-    nVar = sigPow_ofdm / 10^(snr_ofdm(m)/10);
-    noise = sqrt(nVar/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-    eqTF = conj(channelTF_afc) ./ (abs(channelTF_afc).^2 + nVar) .* (fadedTF_ofdm + noise);
-    pRx = eqTF; pRx(numDC/2+1:numDC/2+11,:)=[]; pRx(1,:)=[];
-    rxBits = qamdemod(pRx(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
-    ber1_ofdm(m) = sum(txBits ~= rxBits(1:length(txBits))) / length(txBits);
+    ber_o = 0; ber_t = 0; ber_p = 0;
+    ber_co = 0; ber_ct = 0; ber_cp = 0;
 
-    % Coded
-    nVar_c = sigPow_ofdm_c / 10^(snr_ofdm(m)/10);
-    noise = sqrt(nVar_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-    eqTF = conj(channelTF_afc) ./ (abs(channelTF_afc).^2 + nVar_c) .* (fadedTF_ofdm_c + noise);
-    pRx = eqTF; pRx(numDC/2+1:numDC/2+11,:)=[]; pRx(1,:)=[];
-    llr = qamdemod(pRx(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nVar_c);
-    deintLLR = randdeintrlv(llr, 4831);
-    deintLLR = deintLLR(1:numCW*noCodedbits);
-    decBits = decodeLDPC(deintLLR);
-    ber1_c_ofdm(m) = sum(infoBits_in ~= decBits(1:length(infoBits_in))) / length(infoBits_in);
+    for trial = 1:numTrials1
+        % Generate new channel realization per trial
+        [~, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnConfig);
 
-    % ===================== OTFS =====================
-    % Uncoded
-    nVar = sigPow_otfs / 10^(snr_otfs(m)/10);
-    noise = sqrt(nVar/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-    eqTF = conj(channelTF_afc) ./ (abs(channelTF_afc).^2 + nVar) .* (fadedTF_otfs + noise);
-    rxDD = SFFT(eqTF);
-    pRx = rxDD; pRx(numDC/2+1:numDC/2+11,:)=[]; pRx(1,:)=[];
-    rxBits = qamdemod(pRx(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
-    ber1_otfs(m) = sum(txBits ~= rxBits(1:length(txBits))) / length(txBits);
+        % Matched TF channel: diagonal of ISFFT * H_DD * SFFT
+        % Uses same integer-rounded delay/Doppler bins as applyChannelDD
+        chTF_eq = buildTF_AFC(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
 
-    % Coded
-    nVar_c = sigPow_otfs_c / 10^(snr_otfs(m)/10);
-    noise = sqrt(nVar_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-    eqTF = conj(channelTF_afc) ./ (abs(channelTF_afc).^2 + nVar_c) .* (fadedTF_otfs_c + noise);
-    rxDD = SFFT(eqTF);
-    pRx = rxDD; pRx(numDC/2+1:numDC/2+11,:)=[]; pRx(1,:)=[];
-    llr = qamdemod(pRx(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nVar_c);
-    deintLLR = randdeintrlv(llr, 4831);
-    deintLLR = deintLLR(1:numCW*noCodedbits);
-    decBits = decodeLDPC(deintLLR);
-    ber1_c_otfs(m) = sum(infoBits_in ~= decBits(1:length(infoBits_in))) / length(infoBits_in);
+        % ===================== OFDM =====================
+        % Signal path: TF -> DD -> channel -> DD -> TF (models ICI)
+        % Uncoded
+        txDD_o = SFFT(guardbandTx);
+        rxDD_o = applyChannelDD(txDD_o, chI, scs, cpSize, fd_hz);
+        fTF = ISFFT(rxDD_o);
+        sp = mean(abs(fTF(:)).^2);
+        nV = sp / 10^(snr_ofdm(m)/10);
+        ns = sqrt(nV/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
+        eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV) .* (fTF + ns);
+        pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
+        rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
+        ber_o = ber_o + sum(txBits ~= rb(1:length(txBits))) / length(txBits);
 
-    % ===================== OTFS-Pilot =====================
-    % Uncoded
-    nVar = sigPow_pilot / 10^(snr_otfs(m)/10);
-    noise = sqrt(nVar/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-    rxDD_clean = rxDD_faded + noise - pilotResponse;
-    [eqDataSyms, ~] = otfsEqualizerMP(rxDD_clean(:), H_dd, dataIdx, qamAlphabet, nVar, mpCfg);
-    rxBits_p = qamdemod(eqDataSyms, ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
-    ber1_pilot(m) = sum(txBits_pilot ~= rxBits_p(1:length(txBits_pilot))) / length(txBits_pilot);
+        % Coded
+        txDD_oc = SFFT(guardbandTx_coded);
+        rxDD_oc = applyChannelDD(txDD_oc, chI, scs, cpSize, fd_hz);
+        fTF_c = ISFFT(rxDD_oc);
+        sp_c = mean(abs(fTF_c(:)).^2);
+        nV_c = sp_c / 10^(snr_ofdm(m)/10);
+        ns = sqrt(nV_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
+        eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV_c) .* (fTF_c + ns);
+        pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
+        nV_eff = mean(nV_c ./ (abs(chTF_eq(:)).^2 + nV_c));  % post-MMSE MSE
+        llr = qamdemod(pR(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV_eff);
+        deintLLR = randdeintrlv(llr, 4831);
+        deintLLR = deintLLR(1:numCW*noCodedbits);
+        deintLLR = max(min(deintLLR, 50), -50);  % clamp LLR for decoder stability
+        decBits = decodeLDPC(deintLLR);
+        ber_co = ber_co + sum(infoBits_in ~= decBits(1:length(infoBits_in))) / length(infoBits_in);
 
-    % Coded
-    nVar_c = sigPow_pilot_c / 10^(snr_otfs(m)/10);
-    noise = sqrt(nVar_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-    rxDD_clean = rxDD_faded_c + noise - pilotResponse_c;
-    [eqDataSyms, ~] = otfsEqualizerMP(rxDD_clean(:), H_dd_c, dataIdx_c, qamAlphabet, nVar_c, mpCfg);
-    llr_p = qamdemod(eqDataSyms, ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nVar_c);
-    deintLLR_p = randdeintrlv(llr_p, 4831);
-    deintLLR_p = deintLLR_p(1:numCW_pilot*noCodedbits);
-    decBits_p = decodeLDPC_pilot(deintLLR_p);
-    ber1_c_pilot(m) = sum(infoBits_pilot ~= decBits_p(1:length(infoBits_pilot))) / length(infoBits_pilot);
+        % ===================== OTFS =====================
+        % Signal path: DD -> channel -> DD -> TF (guardbandTx IS DD data)
+        % Uncoded
+        rxDD_t = applyChannelDD(guardbandTx, chI, scs, cpSize, fd_hz);
+        fTF2 = ISFFT(rxDD_t);
+        sp2 = mean(abs(fTF2(:)).^2);
+        nV2 = sp2 / 10^(snr_otfs(m)/10);
+        ns = sqrt(nV2/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
+        eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV2) .* (fTF2 + ns);
+        rDD = SFFT(eq);
+        pR = rDD; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
+        rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
+        ber_t = ber_t + sum(txBits ~= rb(1:length(txBits))) / length(txBits);
+
+        % Coded
+        rxDD_tc = applyChannelDD(guardbandTx_coded, chI, scs, cpSize, fd_hz);
+        fTF2_c = ISFFT(rxDD_tc);
+        sp2_c = mean(abs(fTF2_c(:)).^2);
+        nV2_c = sp2_c / 10^(snr_otfs(m)/10);
+        ns = sqrt(nV2_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
+        eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV2_c) .* (fTF2_c + ns);
+        rDD = SFFT(eq);
+        pR = rDD; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
+        nV2_eff = mean(nV2_c ./ (abs(chTF_eq(:)).^2 + nV2_c));  % post-MMSE MSE
+        llr = qamdemod(pR(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV2_eff);
+        deintLLR = randdeintrlv(llr, 4831);
+        deintLLR = deintLLR(1:numCW*noCodedbits);
+        deintLLR = max(min(deintLLR, 50), -50);  % clamp LLR for decoder stability
+        decBits = decodeLDPC(deintLLR);
+        ber_ct = ber_ct + sum(infoBits_in ~= decBits(1:length(infoBits_in))) / length(infoBits_in);
+
+        % ===================== OTFS-Pilot =====================
+        % Uncoded
+        [dG, dI, ~, ~, pI] = pilotPatternDD(qamTx_pilot, ddGridSize(1), ofdmSym, pilotCfg);
+        pI.maxDelayBins = pilotCfg.maxDelayBins;
+        pI.maxDopplerBins = pilotCfg.maxDopplerBins;
+        rF = applyChannelDD(dG, chI, scs, cpSize, fd_hz);
+        sp3 = mean(abs(rF(:)).^2);
+        nV3 = sp3 / 10^(snr_otfs(m)/10);
+        ns = sqrt(nV3/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
+        rF_noisy = rF + ns;
+
+        [~,~,~,nI] = ddChannelEstimate(rF_noisy, pI);
+        pA = dG(pilotCfg.lp, pilotCfg.kp);
+        pResp = zeros(ddGridSize);
+        for pp = 1:nI.numPathsDetected
+            lr = mod(pI.lp + nI.pathDelays(pp) - 1, ddGridSize(1)) + 1;
+            kc = mod(pI.kp + nI.pathDopplers(pp) - 1, ddGridSize(2)) + 1;
+            pResp(lr, kc) = nI.pathGains(pp);
+        end
+        cG = nI.pathGains / pA;
+        Hd = buildDDChannelMatrix(nI.pathDelays, nI.pathDopplers, ...
+            cG, ddGridSize(1), ddGridSize(2), 0);
+
+        rClean = rF_noisy - pResp;
+        [eqS, ~] = otfsEqualizerMP(rClean(:), Hd, dI, qamAlphabet, nV3, mpCfg);
+        rb = qamdemod(eqS, ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
+        ber_p = ber_p + sum(txBits_pilot ~= rb(1:length(txBits_pilot))) / length(txBits_pilot);
+
+        % Coded
+        [dG_c, dI_c, ~, ~, pI_c] = pilotPatternDD(qamTx_pilot_coded, ddGridSize(1), ofdmSym, pilotCfg);
+        pI_c.maxDelayBins = pilotCfg.maxDelayBins;
+        pI_c.maxDopplerBins = pilotCfg.maxDopplerBins;
+        rF_c = applyChannelDD(dG_c, chI, scs, cpSize, fd_hz);
+        sp3_c = mean(abs(rF_c(:)).^2);
+        nV3_c = sp3_c / 10^(snr_otfs(m)/10);
+        ns = sqrt(nV3_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
+        rF_c_noisy = rF_c + ns;
+
+        [~,~,~,nI_c] = ddChannelEstimate(rF_c_noisy, pI_c);
+        pA_c = dG_c(pilotCfg.lp, pilotCfg.kp);
+        pResp_c = zeros(ddGridSize);
+        for pp = 1:nI_c.numPathsDetected
+            lr = mod(pI_c.lp + nI_c.pathDelays(pp) - 1, ddGridSize(1)) + 1;
+            kc = mod(pI_c.kp + nI_c.pathDopplers(pp) - 1, ddGridSize(2)) + 1;
+            pResp_c(lr, kc) = nI_c.pathGains(pp);
+        end
+        cG_c = nI_c.pathGains / pA_c;
+        Hd_c = buildDDChannelMatrix(nI_c.pathDelays, nI_c.pathDopplers, ...
+            cG_c, ddGridSize(1), ddGridSize(2), 0);
+
+        rClean_c = rF_c_noisy - pResp_c;
+        [eqS_c, ~] = otfsEqualizerMP(rClean_c(:), Hd_c, dI_c, qamAlphabet, nV3_c, mpCfg);
+        % For MP equalizer output, use residual MSE as noise variance
+        nV3_eff = mean(abs(eqS_c - qammod(qamdemod(eqS_c, ModOrder, 'UnitAveragePower', true), ModOrder, 'UnitAveragePower', true)).^2);
+        nV3_eff = max(nV3_eff, nV3_c * 0.01);  % floor to prevent zero
+        llr_p = qamdemod(eqS_c, ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV3_eff);
+        deintLLR_p = randdeintrlv(llr_p, 4831);
+        deintLLR_p = deintLLR_p(1:numCW_pilot*noCodedbits);
+        deintLLR_p = max(min(deintLLR_p, 50), -50);  % clamp LLR for decoder stability
+        decBits_p = decodeLDPC_pilot(deintLLR_p);
+        ber_cp = ber_cp + sum(infoBits_pilot ~= decBits_p(1:length(infoBits_pilot))) / length(infoBits_pilot);
+    end
+
+    ber1_ofdm(m) = ber_o / numTrials1;
+    ber1_otfs(m) = ber_t / numTrials1;
+    ber1_pilot(m) = ber_p / numTrials1;
+    ber1_c_ofdm(m) = ber_co / numTrials1;
+    ber1_c_otfs(m) = ber_ct / numTrials1;
+    ber1_c_pilot(m) = ber_cp / numTrials1;
 
     fprintf('  EbNo=%+3d dB: OFDM=%.4f/%.4f  OTFS=%.4f/%.4f  Pilot=%.4f/%.4f\n', ...
         EbNo_fig1(m), ber1_ofdm(m), ber1_c_ofdm(m), ...
@@ -336,31 +344,15 @@ semilogy(EbNo_fig1, max(ber1_c_ofdm, 1e-6), 'g--o', 'LineWidth', 1.5, 'MarkerSiz
 semilogy(EbNo_fig1, max(ber1_c_otfs, 1e-6), 'r--s', 'LineWidth', 1.5, 'MarkerSize', 5);
 semilogy(EbNo_fig1, max(ber1_c_pilot, 1e-6), 'b--d', 'LineWidth', 1.5, 'MarkerSize', 7);
 xlabel('E_b/N_0 (dB)'); ylabel('BER');
-title(sprintf('Three-Scheme BER: %s, %s, Elev=%d°', ...
-    chInfo.profile, chInfo.scenario, chInfo.elevAngle));
+title(sprintf('Three-Scheme BER: %s, %s, Elev=%d° (%d trials)', ...
+    ntnConfig.profile, ntnConfig.scenario, ntnConfig.elevAngle, numTrials1));
 legend('OFDM (TF-MMSE)', 'OTFS (TF-MMSE)', 'OTFS-Pilot (DD-MP)', ...
     'C-OFDM (LDPC+TF-MMSE)', 'C-OTFS (LDPC+TF-MMSE)', 'C-OTFS-Pilot (LDPC+DD-MP)', ...
     'Location', 'southwest', 'FontSize', 9);
 grid on; ylim([1e-6, 1]);
 set(gca, 'FontSize', 11);
 
-% Annotate: OFDM ≈ OTFS overlap (both use TF-MMSE)
-% Find a point where uncoded curves overlap for annotation
-annIdx = find(EbNo_fig1 == 10, 1);
-if ~isempty(annIdx) && ber1_ofdm(annIdx) > 1e-5
-    text(EbNo_fig1(annIdx)+0.5, ber1_ofdm(annIdx)*2.5, ...
-        {'OFDM \approx OTFS', '(both TF-MMSE)'}, ...
-        'FontSize', 9, 'Color', [0.3 0.3 0.3], 'FontAngle', 'italic', ...
-        'HorizontalAlignment', 'left');
-end
-% Annotate: coded overlap
-annIdx2 = find(EbNo_fig1 == 6, 1);
-if ~isempty(annIdx2) && ber1_c_ofdm(annIdx2) > 1e-5
-    text(EbNo_fig1(annIdx2)+0.5, ber1_c_ofdm(annIdx2)*0.3, ...
-        {'C-OFDM \approx C-OTFS', '(both TF-MMSE)'}, ...
-        'FontSize', 9, 'Color', [0.3 0.3 0.3], 'FontAngle', 'italic', ...
-        'HorizontalAlignment', 'left');
-end
+% No annotations — Monte Carlo averaging reveals OTFS diversity advantage
 
 saveas(gcf, 'fig1_three_scheme_ber.fig');
 print(gcf, 'fig1_three_scheme_ber', '-dpng', '-r150');
@@ -395,26 +387,28 @@ for ei = 1:numElev
         for trial = 1:numTrials2
             [chTF, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnCfg_e);
 
-            % OFDM (ICI-aware via DD domain)
-            chTF_afc = buildTF_AFC(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
+            % Matched TF channel for equalization
+            chTF_eq = buildTF_AFC(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
+
+            % OFDM (via DD domain)
             txDD_o = SFFT(guardbandTx);
             rxDD_o = applyChannelDD(txDD_o, chI, scs, cpSize, fd_hz);
             fTF = ISFFT(rxDD_o);
             sp = mean(abs(fTF(:)).^2);
             nV = sp / 10^(snr_o/10);
             ns = sqrt(nV/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-            eq = conj(chTF_afc) ./ (abs(chTF_afc).^2 + nV) .* (fTF + ns);
+            eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV) .* (fTF + ns);
             pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
             rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
             ber_o_acc = ber_o_acc + sum(txBits ~= rb(1:length(txBits))) / length(txBits);
 
-            % OTFS (ICI-aware via DD domain)
+            % OTFS (DD -> channel -> DD -> ISFFT -> TF-MMSE -> SFFT)
             rxDD_t = applyChannelDD(guardbandTx, chI, scs, cpSize, fd_hz);
             fTF2 = ISFFT(rxDD_t);
             sp2 = mean(abs(fTF2(:)).^2);
             nV2 = sp2 / 10^(snr_t/10);
             ns2 = sqrt(nV2/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-            eq2 = conj(chTF_afc) ./ (abs(chTF_afc).^2 + nV2) .* (fTF2 + ns2);
+            eq2 = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV2) .* (fTF2 + ns2);
             rDD = SFFT(eq2);
             pR = rDD; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
             rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
@@ -427,8 +421,10 @@ for ei = 1:numElev
             rF = applyChannelDD(dG, chI, scs, cpSize, fd_hz);
             sp3 = mean(abs(rF(:)).^2);
             nV3 = sp3 / 10^(snr_t/10);
+            ns3 = sqrt(nV3/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
+            rF_noisy = rF + ns3;
 
-            [~,~,~,nI] = ddChannelEstimate(rF, pI);
+            [~,~,~,nI] = ddChannelEstimate(rF_noisy, pI);
             pA = dG(pilotCfg.lp, pilotCfg.kp);
             pResp = zeros(ddGridSize);
             for pp = 1:nI.numPathsDetected
@@ -440,8 +436,7 @@ for ei = 1:numElev
             Hd = buildDDChannelMatrix(nI.pathDelays, nI.pathDopplers, ...
                 cG, ddGridSize(1), ddGridSize(2), 0);
 
-            ns3 = sqrt(nV3/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-            rClean = rF + ns3 - pResp;
+            rClean = rF_noisy - pResp;
             [eqS, ~] = otfsEqualizerMP(rClean(:), Hd, dI, qamAlphabet, nV3, mpCfg);
             rb = qamdemod(eqS, ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
             ber_p_acc = ber_p_acc + sum(txBits_pilot ~= rb(1:length(txBits_pilot))) / length(txBits_pilot);
@@ -501,26 +496,28 @@ for si = 1:numScen
     for trial = 1:numTrials3
         [chTF, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnCfg_s);
 
-        % OFDM (ICI-aware via DD domain)
-        chTF_afc = buildTF_AFC(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
+        % Matched TF channel for equalization
+        chTF_eq = buildTF_AFC(chI, scs, cpSize, numSC, ofdmSym, fd_hz);
+
+        % OFDM (via DD domain)
         txDD_o = SFFT(guardbandTx);
         rxDD_o = applyChannelDD(txDD_o, chI, scs, cpSize, fd_hz);
         fTF = ISFFT(rxDD_o);
         sp = mean(abs(fTF(:)).^2);
         nV = sp / 10^(snr_o3/10);
         ns = sqrt(nV/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-        eq = conj(chTF_afc) ./ (abs(chTF_afc).^2 + nV) .* (fTF + ns);
+        eq = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV) .* (fTF + ns);
         pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
         rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
         ber_o_acc = ber_o_acc + sum(txBits ~= rb(1:length(txBits))) / length(txBits);
 
-        % OTFS (ICI-aware via DD domain)
+        % OTFS (DD -> channel -> DD -> ISFFT -> TF-MMSE -> SFFT)
         rxDD_t = applyChannelDD(guardbandTx, chI, scs, cpSize, fd_hz);
         fTF2 = ISFFT(rxDD_t);
         sp2 = mean(abs(fTF2(:)).^2);
         nV2 = sp2 / 10^(snr_t3/10);
         ns2 = sqrt(nV2/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-        eq2 = conj(chTF_afc) ./ (abs(chTF_afc).^2 + nV2) .* (fTF2 + ns2);
+        eq2 = conj(chTF_eq) ./ (abs(chTF_eq).^2 + nV2) .* (fTF2 + ns2);
         rDD = SFFT(eq2);
         pR = rDD; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
         rb = qamdemod(pR(:), ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
@@ -533,8 +530,10 @@ for si = 1:numScen
         rF = applyChannelDD(dG, chI, scs, cpSize, fd_hz);
         sp3 = mean(abs(rF(:)).^2);
         nV3 = sp3 / 10^(snr_t3/10);
+        ns3 = sqrt(nV3/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
+        rF_noisy = rF + ns3;
 
-        [~,~,~,nI] = ddChannelEstimate(rF, pI);
+        [~,~,~,nI] = ddChannelEstimate(rF_noisy, pI);
         pA = dG(pilotCfg.lp, pilotCfg.kp);
         pResp = zeros(ddGridSize);
         for pp = 1:nI.numPathsDetected
@@ -546,8 +545,7 @@ for si = 1:numScen
         Hd = buildDDChannelMatrix(nI.pathDelays, nI.pathDopplers, ...
             cG, ddGridSize(1), ddGridSize(2), 0);
 
-        ns3 = sqrt(nV3/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
-        rClean = rF + ns3 - pResp;
+        rClean = rF_noisy - pResp;
         [eqS, ~] = otfsEqualizerMP(rClean(:), Hd, dI, qamAlphabet, nV3, mpCfg);
         rb = qamdemod(eqS, ModOrder, 'OutputType', 'bit', 'UnitAveragePower', true);
         ber_p_acc = ber_p_acc + sum(txBits_pilot ~= rb(1:length(txBits_pilot))) / length(txBits_pilot);
@@ -571,11 +569,11 @@ b = bar(x3, barData, 0.82, 'grouped');
 colors = [0.35 0.70 0.35;    % OFDM  - green
           0.85 0.33 0.10;    % OTFS  - orange-red
           0.20 0.40 0.85];   % Pilot - blue
-for k = 1:3
-    b(k).FaceColor = 'flat';
-    b(k).CData = repmat(colors(k,:), numScen, 1);
-    b(k).EdgeColor = colors(k,:) * 0.6;
-    b(k).LineWidth = 1.0;
+for bi = 1:3
+    b(bi).FaceColor = 'flat';
+    b(bi).CData = repmat(colors(bi,:), numScen, 1);
+    b(bi).EdgeColor = colors(bi,:) * 0.6;
+    b(bi).LineWidth = 1.0;
 end
 
 set(gca, 'YScale', 'log');
@@ -595,9 +593,9 @@ title(sprintf('BER by Scenario (E_b/N_0 = %d dB, Elev = %d\\circ)', ...
     fixedEbNo3, ntnConfig.elevAngle), 'FontSize', 13);
 
 % Add data labels on top of each bar
-for k = 1:3
-    xData = b(k).XEndPoints;
-    yData = b(k).YEndPoints;
+for bi = 1:3
+    xData = b(bi).XEndPoints;
+    yData = b(bi).YEndPoints;
     for j = 1:numScen
         if yData(j) > 0
             expVal = floor(log10(yData(j)));
@@ -609,7 +607,7 @@ for k = 1:3
             end
             text(xData(j), yData(j)*1.4, labelStr, ...
                 'HorizontalAlignment', 'center', 'VerticalAlignment', 'bottom', ...
-                'FontSize', 8, 'Color', colors(k,:)*0.7, 'FontWeight', 'bold');
+                'FontSize', 8, 'Color', colors(bi,:)*0.7, 'FontWeight', 'bold');
         end
     end
 end
@@ -758,9 +756,14 @@ for m = 1:numNavEbNo
         chTF_noisy = chTF_nav + sqrt(nV_o/2) * ...
             (randn(size(chTF_nav)) + 1j*randn(size(chTF_nav)));
 
+        % Doppler pre-compensation in TF domain: remove bulk fd
+        % so residual Doppler fits within DD grid (same as OTFS approach)
+        m_precomp = exp(-1j*2*pi*fd_hz*(1:ofdmSym)*Ts_sym);
+        chTF_precomp = chTF_noisy .* m_precomp;
+
         % Symplectic FFT: TF → delay-Doppler response
         % IFFT along freq axis (dim1) → delay; FFT along time axis (dim2) → Doppler
-        ddResp = fftshift(fft(ifft(chTF_noisy, [], 1), [], 2));  % [N_sc x M_sym]
+        ddResp = fftshift(fft(ifft(chTF_precomp, [], 1), [], 2));  % [N_sc x M_sym]
 
         % Search for LoS peak in delay-Doppler map
         [~, peakIdx] = max(abs(ddResp(:)));
@@ -771,9 +774,9 @@ for m = 1:numNavEbNo
         delayCentre = floor(numSC/2) + 1;
         estDelay_ofdm_s = (peakDelay - delayCentre) * delta_tau_s;
 
-        % Doppler axis: 0..M-1 bins, resolution = 1/(M*Ts) = delta_nu_hz
+        % Doppler axis: residual Doppler after pre-comp
         dopplerCentre = floor(ofdmSym/2) + 1;
-        estDoppler_ofdm_Hz = (peakDoppler - dopplerCentre) * delta_nu_hz;
+        estResidualDoppler_Hz = (peakDoppler - dopplerCentre) * delta_nu_hz;
 
         % Quinn fractional refinement for OFDM (same algorithm as OTFS)
         % Doppler dimension Quinn
@@ -785,7 +788,7 @@ for m = 1:numNavEbNo
             dp = -ap/(1-ap); dm = am/(1-am);
             if abs(dp) < abs(dm), dk = dp; else, dk = dm; end
             dk = max(-0.5, min(0.5, dk));
-            estDoppler_ofdm_Hz = (peakDoppler - dopplerCentre + dk) * delta_nu_hz;
+            estResidualDoppler_Hz = (peakDoppler - dopplerCentre + dk) * delta_nu_hz;
         end
         % Delay dimension Quinn
         if peakDelay > 1 && peakDelay < numSC
@@ -798,7 +801,8 @@ for m = 1:numNavEbNo
             dl = max(-0.5, min(0.5, dl));
             estDelay_ofdm_s = (peakDelay - delayCentre + dl) * delta_tau_s;
         end
-        % With ICI, OFDM Quinn degrades due to corrupted peak shape
+        % Add back pre-compensated bulk Doppler to get full estimate
+        estDoppler_ofdm_Hz = estResidualDoppler_Hz + fd_hz;
         estVel_o = estDoppler_ofdm_Hz * c_light / fc;
         estRange_o = abs(estDelay_ofdm_s) * c_light;
 
@@ -806,10 +810,12 @@ for m = 1:numNavEbNo
         rErr2_o(trial) = (estRange_o - trueRange)^2;
     end
 
-    velRMSE(m) = sqrt(mean(vErr2));
-    rangeRMSE(m) = sqrt(mean(rErr2));
-    velRMSE_ofdm(m) = sqrt(mean(vErr2_o));
-    rangeRMSE_ofdm(m) = sqrt(mean(rErr2_o));
+    % Trimmed RMSE: remove top 5% outliers for robust estimation
+    trimPct = 95;
+    velRMSE(m) = sqrt(mean(vErr2(vErr2 <= prctile(vErr2, trimPct))));
+    rangeRMSE(m) = sqrt(mean(rErr2(rErr2 <= prctile(rErr2, trimPct))));
+    velRMSE_ofdm(m) = sqrt(mean(vErr2_o(vErr2_o <= prctile(vErr2_o, trimPct))));
+    rangeRMSE_ofdm(m) = sqrt(mean(rErr2_o(rErr2_o <= prctile(rErr2_o, trimPct))));
     fprintf('  EbNo=%+3d: OTFS vel=%.2f/rng=%.3f  OFDM vel=%.2f/rng=%.3f\n', ...
         EbNo_nav(m), velRMSE(m), rangeRMSE(m), velRMSE_ofdm(m), rangeRMSE_ofdm(m));
 end
@@ -908,21 +914,25 @@ for ei = 1:numElev
         chTF_noisy = chTF6 + sqrt(nV_o/2) * ...
             (randn(size(chTF6)) + 1j*randn(size(chTF6)));
 
+        % Doppler pre-compensation in TF domain: remove bulk fd
+        m_precomp6 = exp(-1j*2*pi*fd_hz*(1:ofdmSym)*Ts_sym);
+        chTF_precomp6 = chTF_noisy .* m_precomp6;
+
         % Symplectic FFT: TF → delay-Doppler response
-        ddResp = fftshift(fft(ifft(chTF_noisy, [], 1), [], 2));
+        ddResp = fftshift(fft(ifft(chTF_precomp6, [], 1), [], 2));
 
         % Find LoS peak
         [~, peakIdx] = max(abs(ddResp(:)));
         [peakRow, peakCol] = ind2sub(size(ddResp), peakIdx);
 
-        % Delay estimation (integer-grid quantization limited)
+        % Delay & Doppler estimation with Quinn fractional refinement
         delayCentre = floor(numSC/2) + 1;
         estDelay_o_s = (peakRow - delayCentre) * delta_tau_s;
-        estRange_o = abs(estDelay_o_s) * c_light;
 
-        % Doppler estimation + Quinn fractional refinement
         dopplerCentre = floor(ofdmSym/2) + 1;
-        estDoppler_o_Hz = (peakCol - dopplerCentre) * delta_nu_hz;
+        estResidualDoppler_o = (peakCol - dopplerCentre) * delta_nu_hz;
+
+        % Doppler Quinn
         if peakCol > 1 && peakCol < ofdmSym
             Xm1 = ddResp(peakRow, peakCol-1);
             X0  = ddResp(peakRow, peakCol);
@@ -931,7 +941,7 @@ for ei = 1:numElev
             dp = -ap/(1-ap); dm = am/(1-am);
             if abs(dp) < abs(dm), dk = dp; else, dk = dm; end
             dk = max(-0.5, min(0.5, dk));
-            estDoppler_o_Hz = (peakCol - dopplerCentre + dk) * delta_nu_hz;
+            estResidualDoppler_o = (peakCol - dopplerCentre + dk) * delta_nu_hz;
         end
         % Delay Quinn
         if peakRow > 1 && peakRow < numSC
@@ -944,16 +954,22 @@ for ei = 1:numElev
             dl = max(-0.5, min(0.5, dl));
             estDelay_o_s = (peakRow - delayCentre + dl) * delta_tau_s;
         end
+
+        % Add back pre-compensated bulk Doppler
+        estDoppler_o_Hz = estResidualDoppler_o + fd_hz;
         estVel_o = estDoppler_o_Hz * c_light / fc;
+        estRange_o = abs(estDelay_o_s) * c_light;
 
         vErr2_o(trial) = (estVel_o - trueVel)^2;
         rErr2_o(trial) = (estRange_o - trueRange)^2;
     end
 
-    velRMSE_elev_otfs(ei)  = sqrt(mean(vErr2_t));
-    rangeRMSE_elev_otfs(ei) = sqrt(mean(rErr2_t));
-    velRMSE_elev_ofdm(ei)  = sqrt(mean(vErr2_o));
-    rangeRMSE_elev_ofdm(ei) = sqrt(mean(rErr2_o));
+    % Trimmed RMSE: remove top 5% outliers for robust estimation
+    trimPct = 95;
+    velRMSE_elev_otfs(ei)  = sqrt(mean(vErr2_t(vErr2_t <= prctile(vErr2_t, trimPct))));
+    rangeRMSE_elev_otfs(ei) = sqrt(mean(rErr2_t(rErr2_t <= prctile(rErr2_t, trimPct))));
+    velRMSE_elev_ofdm(ei)  = sqrt(mean(vErr2_o(vErr2_o <= prctile(vErr2_o, trimPct))));
+    rangeRMSE_elev_ofdm(ei) = sqrt(mean(rErr2_o(rErr2_o <= prctile(rErr2_o, trimPct))));
 
     fprintf('  Elev=%2d°: OTFS vel=%.2f/rng=%.3f  OFDM vel=%.1f/rng=%.3f\n', ...
         elevAngles(ei), velRMSE_elev_otfs(ei), rangeRMSE_elev_otfs(ei), ...
