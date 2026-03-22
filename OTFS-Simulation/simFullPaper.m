@@ -230,8 +230,10 @@ for m = 1:numEbNo1
         ns = sqrt(nV_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
         eq = conj(chTF_ofdm) ./ (abs(chTF_ofdm).^2 + nV_c) .* (fTF_c + ns);
         pR = eq; pR(numDC/2+1:numDC/2+11,:)=[]; pR(1,:)=[];
-        nV_eff = mean(nV_c ./ (abs(chTF_ofdm(:)).^2 + nV_c));
-        llr = qamdemod(pR(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV_eff);
+        % Empirical noise variance: captures ICI residual after one-tap equalization
+        hardDec_o = qammod(qamdemod(pR(:), ModOrder, 'UnitAveragePower', true), ModOrder, 'UnitAveragePower', true);
+        nV_c_emp = max(mean(abs(pR(:) - hardDec_o).^2), 1e-10);
+        llr = qamdemod(pR(:), ModOrder, 'OutputType', 'approxllr', 'UnitAveragePower', true, 'NoiseVariance', nV_c_emp);
         deintLLR = randdeintrlv(llr, 4831);
         deintLLR = deintLLR(1:numCW*noCodedbits);
         deintLLR = max(min(deintLLR, 50), -50);
