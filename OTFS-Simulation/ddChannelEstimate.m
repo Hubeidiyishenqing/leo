@@ -67,7 +67,12 @@ scanCols = max(1, kp - maxDopplerBins) : min(M, kp + maxDopplerBins);
 % With pilot boost of ~10 dB, pilot amplitude ≈ 3.16x data amplitude.
 % Threshold at -8 dB below pilot catches paths with |h| > 0.4 (rel to LoS)
 % while rejecting data contamination (amplitude ~ 1/pilot_boost).
-pilotAmp = abs(rxGrid(lp, kp));
+%
+% Use max amplitude in scan region (not fixed (lp,kp)) because bulk
+% propagation delay can shift the pilot response away from the nominal
+% position, leaving only noise at (lp,kp).
+scanRegion = abs(rxGrid(scanRows, scanCols));
+pilotAmp = max(scanRegion(:));
 threshRelativedB = -8;  % Detect paths down to -8 dB below pilot
 threshold = pilotAmp * 10^(threshRelativedB/20);
 
@@ -161,7 +166,7 @@ if losRow > 1 && losRow < N
 end
 
 %% Navigation information extraction
-pilotEnergy = abs(rxGrid(lp, kp))^2;
+pilotEnergy = pilotAmp^2;  % Use actual peak, not fixed (lp,kp)
 noiseEst = median(abs(rxGrid(:)).^2) * 0.5;  % Noise from full grid
 
 navInfo.pathDelays = delayEst;
