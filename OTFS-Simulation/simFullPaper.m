@@ -109,7 +109,7 @@ subframeBits = numDC * ofdmSym * k;
 numCW = floor(subframeBits / noCodedbits);
 if numCW < 1, numCW = 1; end
 codedBitsTotal = numCW * noCodedbits;
-padBits = subframeBits - codedBitsTotal;
+padBits = max(0, subframeBits - codedBitsTotal);
 
 % Generate info bits -> encode -> pad -> interleave -> QAM
 infoBits_in = randi([0, 1], numCW * infoBitsPerCW, 1);
@@ -149,7 +149,7 @@ qamTx_pilot = qammod(txBits_pilot, ModOrder, 'InputType', 'bit', 'UnitAveragePow
 numCW_pilot = floor(numDataPosPilot * k / noCodedbits);
 if numCW_pilot < 1, numCW_pilot = 1; end
 codedBitsTotal_p = numCW_pilot * noCodedbits;
-padBits_p = numDataPosPilot * k - codedBitsTotal_p;
+padBits_p = max(0, numDataPosPilot * k - codedBitsTotal_p);
 
 infoBits_pilot = randi([0,1], numCW_pilot * infoBitsPerCW, 1);
 codedData_p = [];
@@ -175,8 +175,11 @@ numEbNo1 = length(EbNo_fig1);
 numTrials1 = 50;   % Monte Carlo trials for statistical reliability
 
 % SNR formulas (match main.m)
+% OFDM/OTFS: guard-band overhead penalty
 snr_ofdm = EbNo_fig1 + 10*log10(codeRate*k) + 10*log10(numDC/numSC);
-snr_otfs = snr_ofdm ;
+snr_otfs = snr_ofdm;
+% OTFS-Pilot: additional pilot+guard overhead penalty
+snr_pilot = EbNo_fig1 + 10*log10(codeRate*k) + 10*log10(numDataPosPilot/(numSC*ofdmSym));
 
 % Uncoded BER
 ber1_ofdm = zeros(numEbNo1, 1);
@@ -190,7 +193,7 @@ ber1_c_pilot = zeros(numEbNo1, 1);
 for m = 1:numEbNo1
     ber_o = 0; ber_t = 0; ber_p = 0;
     ber_co = 0; ber_ct = 0; ber_cp = 0;
-    snr_o_m = snr_ofdm(m);  snr_t_m = snr_otfs(m);
+    snr_o_m = snr_ofdm(m);  snr_t_m = snr_otfs(m);  snr_p_m = snr_pilot(m);
     nBitsTx = length(txBits);  nBitsInfo = length(infoBits_in);
     nBitsPilot = length(txBits_pilot);  nBitsInfoP = length(infoBits_pilot);
 
@@ -272,7 +275,7 @@ for m = 1:numEbNo1
         pI.maxDopplerBins = pilotCfg.maxDopplerBins;
         rF = applyChannelDD(dG, chI, scs, cpSize, fd_hz);
         sp3 = mean(abs(rF(:)).^2);
-        nV3 = sp3 / 10^(snr_t_m/10);
+        nV3 = sp3 / 10^(snr_p_m/10);
         ns = sqrt(nV3/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
         rF_noisy = rF + ns;
 
@@ -303,7 +306,7 @@ for m = 1:numEbNo1
         pI_c.maxDopplerBins = pilotCfg.maxDopplerBins;
         rF_c = applyChannelDD(dG_c, chI, scs, cpSize, fd_hz);
         sp3_c = mean(abs(rF_c(:)).^2);
-        nV3_c = sp3_c / 10^(snr_t_m/10);
+        nV3_c = sp3_c / 10^(snr_p_m/10);
         ns = sqrt(nV3_c/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
         rF_c_noisy = rF_c + ns;
 
@@ -394,11 +397,12 @@ for ei = 1:numElev
     for fi = 1:numFixedEbNo
         ebno = fixedEbNo(fi);
         snr_o = ebno + 10*log10(codeRate*k) + 10*log10(numDC/numSC);
-        snr_t = snr_o ;
+        snr_t = snr_o;
+        snr_p = ebno + 10*log10(codeRate*k) + 10*log10(numDataPosPilot/(numSC*ofdmSym));
 
         nBitsTx2 = length(txBits);
         nBitsPilot2 = length(txBits_pilot);
-        snr_o_fi = snr_o; snr_t_fi = snr_t;
+        snr_o_fi = snr_o; snr_t_fi = snr_t; snr_p_fi = snr_p;
         ber_o_acc = 0; ber_t_acc = 0; ber_p_acc = 0;
         parfor trial = 1:numTrials2
             [chTF, chI] = multipathChannel(cpSize, scs, tfGridSize, velocity, ntnCfg_e);
@@ -436,7 +440,7 @@ for ei = 1:numElev
             pI.maxDopplerBins = pilotCfg.maxDopplerBins;
             rF = applyChannelDD(dG, chI, scs, cpSize, fd_hz);
             sp3 = mean(abs(rF(:)).^2);
-            nV3 = sp3 / 10^(snr_t_fi/10);
+            nV3 = sp3 / 10^(snr_p_fi/10);
             ns3 = sqrt(nV3/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
             rF_noisy = rF + ns3;
 
@@ -502,7 +506,8 @@ numTrials3 = 20;
 fixedEbNo3 = 15;   % Single reference point
 
 snr_o3 = fixedEbNo3 + 10*log10(codeRate*k) + 10*log10(numDC/numSC);
-snr_t3 = snr_o3 ;
+snr_t3 = snr_o3;
+snr_p3 = fixedEbNo3 + 10*log10(codeRate*k) + 10*log10(numDataPosPilot/(numSC*ofdmSym));
 
 ber3_ofdm  = zeros(numScen, 1);
 ber3_otfs  = zeros(numScen, 1);
@@ -551,7 +556,7 @@ for si = 1:numScen
         pI.maxDopplerBins = pilotCfg.maxDopplerBins;
         rF = applyChannelDD(dG, chI, scs, cpSize, fd_hz);
         sp3 = mean(abs(rF(:)).^2);
-        nV3 = sp3 / 10^(snr_t3/10);
+        nV3 = sp3 / 10^(snr_p3/10);
         ns3 = sqrt(nV3/2) * (randn(ddGridSize) + 1j*randn(ddGridSize));
         rF_noisy = rF + ns3;
 
@@ -747,10 +752,9 @@ for m = 1:numNavEbNo
         phaseRamp = exp(-2j*pi * sc_idx * scs * bulkDelay_s);
         chTF_nav = chTF_nav .* phaseRamp;
 
-        % True LoS
-        [~, trueLoS] = max(abs(chN.pathGains));
-        trueVel = chN.pathDopplers_Hz(trueLoS) * c_light / fc;
-        trueRange = chN.pathDelays_s(trueLoS) * c_light;
+        % True LoS (always first tap by construction in multipathChannel)
+        trueVel = chN.pathDopplers_Hz(1) * c_light / fc;
+        trueRange = chN.pathDelays_s(1) * c_light;
 
         % ============ OTFS-Pilot sensing ============
         [dG, ~, ~, ~, pI] = pilotPatternDD(qamTx_pilot, ddGridSize(1), ofdmSym, pilotCfg);
@@ -903,10 +907,9 @@ for ei = 1:numElev
         phaseRamp6 = exp(-2j*pi * sc_idx_6 * scs * bulkDelay_s);
         chTF6 = chTF6 .* phaseRamp6;
 
-        % True LoS parameters
-        [~, trueLoS] = max(abs(chN.pathGains));
-        trueVel   = chN.pathDopplers_Hz(trueLoS) * c_light / fc;
-        trueRange = chN.pathDelays_s(trueLoS) * c_light;
+        % True LoS (always first tap by construction in multipathChannel)
+        trueVel   = chN.pathDopplers_Hz(1) * c_light / fc;
+        trueRange = chN.pathDelays_s(1) * c_light;
 
         % ---- OTFS DD-Pilot sensing ----
         [dG, ~, ~, ~, pI] = pilotPatternDD(qamTx_pilot, ddGridSize(1), ofdmSym, pilotCfg);

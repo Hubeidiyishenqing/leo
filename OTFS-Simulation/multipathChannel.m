@@ -147,7 +147,7 @@ scatterSpread = 0.05 * fd;
 Vi = zeros(1, numPaths);
 for i = 0:numPaths-1
     if numPaths > 1
-        Vi(i+1) = fd + scatterSpread * cos(2 * pi * i / (numPaths - 1));
+        Vi(i+1) = fd + scatterSpread * cos(2 * pi * i / numPaths);
     else
         Vi(i+1) = fd;
     end
@@ -164,7 +164,7 @@ sym_idx = 1:M_sym;
 
 H = zeros(N_sc, M_sym);
 for x = 1:numPaths
-    hiPrime = pathGains(x) * (1 + 1i * pi * Vi(x) * T);
+    hiPrime = pathGains(x) * sinc(Vi(x) * T) * exp(1j * pi * Vi(x) * T);
     expTerm = -2i * pi * (sc_idx * (delta_f * baseDelays_s(x)) ...
               - Vi(x) * Ts * sym_idx);
     H = H + hiPrime * exp(expTerm);
