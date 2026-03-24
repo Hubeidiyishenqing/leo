@@ -39,7 +39,15 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(ls -la \"C:\\\\Users\\\\Administrator\\\\Desktop\\\\code\\\\OTFS-Simulation\"/*.png \"C:\\\\Users\\\\Administrator\\\\Desktop\\\\code\\\\OTFS-Simulation\"/*.fig)"
+      "Bash(ls -la \"C:\\\\Users\\\\Administrator\\\\Desktop\\\\code\\\\OTFS-Simulation\"/*.png \"C:\\\\Users\\\\Administrator\\\\Desktop\\\\code\\\\OTFS-Simulation\"/*.fig)",
+      "Bash(python -c \"numGuardTotal = \\(2*8+1\\) * \\(2*25+1\\); totalPositions = 1024 * 128; pilotBoost_lin = 10**\\(10/10\\); numData = totalPositions - numGuardTotal; sp_with = \\(numData * 1 + 1 * pilotBoost_lin\\) / totalPositions; sp_without = numData / totalPositions; excess = \\(sp_with - sp_without\\) / sp_without * 100; print\\(f''Guard total: {numGuardTotal} \\({numGuardTotal/totalPositions*100:.2f}%%\\)\\\\nExcess power from pilot: {excess:.3f}%%\\\\n=> Negligible impact on MMSE''\\)\")",
+      "Bash(ls \"C:/Users/Administrator/Desktop/code/OTFS-Simulation/\"fig*.png)",
+      "Bash(node create_project_report.js)",
+      "Bash(python \"C:/Users/Administrator/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/f5a9e7bb-ffb1-4a39-b1a9-f6f3bf17cc0d/f9d8ee88-16a5-469b-b51e-a9e5dbf81461/skills/docx/scripts/office/validate.py\" \"C:/Users/Administrator/Desktop/code/OTFS-Simulation/OTFS_Simulation_Report.docx\")",
+      "Bash(ls *.png)",
+      "Bash(python3 -c \"delta_tau = 1/\\(1024*120e3\\); c = 3e8; fc = 2e9; Ts = \\(1+0.07\\)/120e3; delta_nu = 1/\\(128*Ts\\); print\\(f''1 delay bin = {delta_tau*c:.2f} m''\\); print\\(f''0.1 bin = {0.1*delta_tau*c:.2f} m''\\); print\\(f''0.5 bin = {0.5*delta_tau*c:.2f} m''\\); print\\(f''1 Doppler bin = {delta_nu*c/fc:.2f} m/s''\\); print\\(f''0.1 Dop bin = {0.1*delta_nu*c/fc:.2f} m/s''\\); print\\(f''0.75 Dop bin = {0.75*delta_nu*c/fc:.2f} m/s''\\); print\\(f''delta_nu = {delta_nu:.2f} Hz''\\); print\\(f''delta_tau = {delta_tau*1e9:.4f} ns''\\)\")",
+      "Bash(matlab -batch \"delta_tau = 1/\\(1024*120e3\\); c = 3e8; fc = 2e9; Ts = \\(1+0.07\\)/120e3; delta_nu = 1/\\(128*Ts\\); fprintf\\(''1 delay bin = %.2f m\\\\n'', delta_tau*c\\); fprintf\\(''0.5 delay bin = %.2f m\\\\n'', 0.5*delta_tau*c\\); fprintf\\(''1 Doppler bin = %.2f m/s\\\\n'', delta_nu*c/fc\\); fprintf\\(''0.1 Dop bin = %.2f m/s\\\\n'', 0.1*delta_nu*c/fc\\); fprintf\\(''0.75 Dop bin = %.2f m/s\\\\n'', 0.75*delta_nu*c/fc\\); fprintf\\(''delta_nu = %.4f Hz\\\\n'', delta_nu\\); fprintf\\(''delta_tau = %.4f ns\\\\n'', delta_tau*1e9\\);\")",
+      "Bash(matlab -batch \":*)"
     ]
   }
 }

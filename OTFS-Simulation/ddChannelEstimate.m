@@ -139,7 +139,15 @@ end
 
 %% Fractional Doppler estimation for LoS path (Quinn estimator)
 % Quinn's second estimator uses complex DFT bins for optimal accuracy.
-[~, losIdx] = max(abs(pathGains));
+% LoS selection: among strong paths (within 6 dB of strongest), pick
+% the one with smallest delay. This avoids both:
+%   1. Dirichlet sidelobes (weaker, filtered out by 6 dB threshold)
+%   2. Scatter paths during shadow fading (larger delay than LoS)
+maxAmp = max(abs(pathGains));
+strongMask = abs(pathGains) > maxAmp * 10^(-6/20);  % Within 6 dB
+strongIdx = find(strongMask);
+[~, minPos] = min(abs(delayEst(strongIdx)));
+losIdx = strongIdx(minPos);
 losRow = lp + delayEst(losIdx);   % row index in rxGrid
 losCol = kp + dopplerEst(losIdx); % col index in rxGrid
 
